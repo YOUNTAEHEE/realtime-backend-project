@@ -16,7 +16,7 @@ build/
 bin/
 !**/src/main/**/bin/
 !**/src/test/**/bin/
-.env
+
 ### IntelliJ IDEA ###
 .idea
 *.iws
@@ -35,3 +35,8 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# API 키와 민감한 정보가 포함된 파일
+src/main/resources/application-local.yml
+.env
+.env.local
