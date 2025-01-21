@@ -47,7 +47,7 @@ public class WeatherService {
         try {
             List<Map<String, String>> result = new ArrayList<>();
             String[] lines = data.split("\n");
-            log.info("원본 데이터: {}", data);  // 원본 데이터 로깅
+            log.info("원본 데이터: {}", data);
             
             // #7777END 이전의 유효한 데이터만 처리
             List<String> validLines = new ArrayList<>();
@@ -84,18 +84,42 @@ public class WeatherService {
                 String[] values = line.split("\\s+");
                 
                 // 데이터 검증
-                if (values.length < 2) {
+                if (values.length < 4) {  // 최소 필요한 컬럼 수 확인
                     log.warn("라인 {} 스킵: 데이터가 부족함", i);
                     continue;
                 }
 
-                // 필요한 데이터만 추출 (YYMMDDHHMI, TA, WS)
                 Map<String, String> entry = new HashMap<>();
                 entry.put("YYMMDDHHMI", values[0]);  // 시간
-                entry.put("TA", values[2]);          // 기온
-                entry.put("WS", values[3]);          // 풍속
+                
+                // 기온(TA)과 풍속(WS) 데이터 위치 찾기
+                int taIndex = -1;
+                int wsIndex = -1;
+                int tdIndex = -1;
+                int prIndex = -1;
+                for (int j = 0; j < headers.length; j++) {
+                    if (headers[j].equals("TA")) taIndex = j;
+                    if (headers[j].equals("WS")) wsIndex = j;
+                    if (headers[j].equals("PR")) prIndex = j;
+                    if (headers[j].equals("TD")) tdIndex = j;
+                }
+
+                // 찾은 인덱스로 데이터 추출
+                if (taIndex != -1 && taIndex < values.length) {
+                    entry.put("TA", values[taIndex]);
+                }
+                if (wsIndex != -1 && wsIndex < values.length) {
+                    entry.put("WS", values[wsIndex]);
+                }
+                if (tdIndex != -1 && tdIndex < values.length) {
+                    entry.put("TD", values[tdIndex]);
+                }
+                if (prIndex != -1 && prIndex < values.length) {
+                    entry.put("PR", values[prIndex]);
+                }
 
                 result.add(entry);
+                log.debug("파싱된 데이터: {}", entry);  // 각 데이터 로깅
             }
 
             log.info("파싱된 데이터 개수: {}", result.size());
@@ -103,6 +127,7 @@ public class WeatherService {
                 log.info("첫 번째 데이터: {}", result.get(0));
             }
             return result;
+
         } catch (Exception e) {
             log.error("데이터 파싱 중 오류 발생: {}", e.getMessage(), e);
             return Collections.emptyList();
