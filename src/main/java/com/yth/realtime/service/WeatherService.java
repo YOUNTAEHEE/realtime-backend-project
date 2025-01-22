@@ -1,13 +1,22 @@
 package com.yth.realtime.service;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+
+import com.yth.realtime.entity.Weather;
+import com.yth.realtime.repository.WeatherRepository;
 
 import io.github.cdimascio.dotenv.Dotenv;
 import lombok.extern.slf4j.Slf4j;
@@ -20,22 +29,107 @@ public class WeatherService {
 
     private final String apiKey;
 
-    public WeatherService() {
-        // Dotenv를 사용해 .env 파일 로드
+    private final WeatherRepository weatherRepository;
+
+    private final RestTemplate restTemplate;
+
+    @Autowired
+    public WeatherService(WeatherRepository weatherRepository) {
         this.dotenv = Dotenv.load();
-        this.apiKey = dotenv.get("WEATHER_API_KEY"); // .env 파일에서 API 키 가져오기
+        this.apiKey = dotenv.get("WEATHER_API_KEY");
+        this.weatherRepository = weatherRepository;
+        this.restTemplate = new RestTemplate();
     }
 
     public List<Map<String, String>> fetchWeatherData(String dateFirst, String dateLast, String region) {
-        String apiUrl = String.format(
-            "https://apihub.kma.go.kr/api/typ01/url/kma_sfctm3.php?tm1=%s0000&tm2=%s2359&stn=%s&help=0&authKey=%s",
-            dateFirst, dateLast, region, apiKey
-        );
-
-        RestTemplate restTemplate = new RestTemplate();
-        String response = restTemplate.getForObject(apiUrl, String.class);
+        log.info("=== 날씨 데이터 조회 시작 ===");
+        log.info("요청 파라미터: dateFirst={}, dateLast={}, region={}", dateFirst, dateLast, region);
         
-        return parseWeatherData(response);
+        String startDateTime = dateFirst.replaceAll("-", "") + "0000";
+        String endDateTime = dateLast.replaceAll("-", "") + "2359";
+        log.info("변환된 날짜시간: start={}, end={}", startDateTime, endDateTime);
+        
+        // MongoDB에서 데이터 조회
+        List<Weather> savedData = weatherRepository.findByRegionAndDateTimeBetweenOrderByDateTimeDesc(
+            region, startDateTime, endDateTime);
+        log.info("MongoDB 조회 결과: {} 건", savedData.size());
+        
+        // 요청한 날짜 범위의 모든 날짜
+        List<String> requestedDates = getDateRange(dateFirst, dateLast);
+        
+        // 저장된 데이터의 날짜들
+        Set<String> savedDates = savedData.stream()
+            .map(w -> w.getDateTime().substring(0, 8))
+            .collect(Collectors.toSet());
+        
+        // 누락된 날짜 확인
+        List<String> missingDates = requestedDates.stream()
+            .filter(date -> !savedDates.contains(date))
+            .collect(Collectors.toList());
+        
+        if (!missingDates.isEmpty()) {
+            log.info("누락된 날짜 발견: {}", missingDates);
+            
+            // 누락된 각 날짜에 대해 API 호출
+            for (String date : missingDates) {
+                String apiStartTime = date + "0000";
+                String apiEndTime = date + "2359";
+                
+                // API 호출
+                String apiUrl = String.format(
+                    "https://apihub.kma.go.kr/api/typ01/url/kma_sfctm3.php?tm1=%s&tm2=%s&stn=%s&help=0&authKey=%s",
+                    apiStartTime, apiEndTime, region, apiKey
+                );
+                log.info("누락 데이터 API 호출: {}", apiUrl);
+                
+                try {
+                    String response = restTemplate.getForObject(apiUrl, String.class);
+                    List<Map<String, String>> parsedData = parseWeatherData(response);
+                    
+                    if (!parsedData.isEmpty()) {
+                        List<Weather> weatherEntities = parsedData.stream()
+                            .map(data -> Weather.fromMap(data, region))
+                            .collect(Collectors.toList());
+                        
+                        weatherRepository.saveAll(weatherEntities);
+                        log.info("날짜 {} 데이터 저장 완료: {} 건", date, weatherEntities.size());
+                        
+                        // 저장된 데이터를 savedData에 추가
+                        savedData.addAll(weatherEntities);
+                    }
+                } catch (Exception e) {
+                    log.error("날짜 {} 데이터 조회 실패: {}", date, e.getMessage());
+                }
+                
+                // API 호출 간격 조절 (필요한 경우)
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+        
+        // 전체 데이터를 날짜 기준 내림차순 정렬
+        List<Weather> sortedData = savedData.stream()
+            .sorted((a, b) -> b.getDateTime().compareTo(a.getDateTime()))
+            .collect(Collectors.toList());
+        
+        return sortedData.stream()
+            .map(Weather::toMap)
+            .collect(Collectors.toList());
+    }
+
+    private List<String> getDateRange(String startDate, String endDate) {
+        List<String> dates = new ArrayList<>();
+        LocalDate start = LocalDate.parse(startDate, DateTimeFormatter.BASIC_ISO_DATE);
+        LocalDate end = LocalDate.parse(endDate, DateTimeFormatter.BASIC_ISO_DATE);
+        
+        while (!start.isAfter(end)) {
+            dates.add(start.format(DateTimeFormatter.BASIC_ISO_DATE));
+            start = start.plusDays(1);
+        }
+        return dates;
     }
 
     private List<Map<String, String>> parseWeatherData(String data) {
