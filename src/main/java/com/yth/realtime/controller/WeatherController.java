@@ -44,4 +44,14 @@ public class WeatherController {
             return ResponseEntity.internalServerError().body("데이터 조회 실패");
         }
     }
+
+    @GetMapping("/temp-search")
+    public ResponseEntity<?> searchTemperature(
+        @RequestParam("date") String date,
+        @RequestParam("type") String type,  // "hight_temp" 또는 "low_temp"
+        @RequestParam("region") String region
+    ) {
+        Map<String, Object> result = weatherService.findTemperatureExtreme(date, type, region);
+        return ResponseEntity.ok(result);
+    }
 }

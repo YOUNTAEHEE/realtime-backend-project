@@ -2,6 +2,7 @@ package com.yth.realtime.repository;
 
 import java.util.List;
 
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
 
@@ -19,4 +20,11 @@ public interface WeatherRepository extends MongoRepository<Weather, String> {
     @Query(value = "{'region': ?0}", 
            fields = "{'dateTime': 1}")
     List<Weather> findAllByRegion(String region);
+
+    List<Weather> findByRegionAndDateTimeBetweenAndTemperatureNotNullAndTemperatureNotEmpty(
+        String region, 
+        String startDateTime, 
+        String endDateTime, 
+        Sort sort
+    );
 }

@@ -11,7 +11,6 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -115,9 +114,11 @@ public class WeatherService {
             .sorted((a, b) -> b.getDateTime().compareTo(a.getDateTime()))
             .collect(Collectors.toList());
         
-        return sortedData.stream()
+        List<Map<String, String>> result = sortedData.stream()
             .map(Weather::toMap)
             .collect(Collectors.toList());
+        
+        return result;
     }
 
     private List<String> getDateRange(String startDate, String endDate) {
@@ -227,5 +228,93 @@ public class WeatherService {
             return Collections.emptyList();
         }
     }
-}
 
+    public Map<String, Object> findTemperatureExtreme(String date, String type, String region) {
+        try {
+            log.info("=== 최고/최저 온도 검색 시작 ===");
+            log.info("입력 파라미터 - 날짜: {}, 타입: {}, 지역: {}", date, type, region);
+            
+            String startDateTime = date.replaceAll("-", "").trim() + "0000";
+            String endDateTime = date.replaceAll("-", "").trim() + "2359";
+            
+            log.info("변환된 날짜시간 - 시작: {}, 종료: {}", startDateTime, endDateTime);
+            
+            List<Weather> periodData = weatherRepository.findByRegionAndDateTimeBetweenOrderByDateTimeDesc(
+                region, startDateTime, endDateTime);
+            
+            log.info("조회된 전체 데이터 수: {}", periodData.size());
+            
+            // 온도 데이터 필터링 과정 로깅
+            List<Weather> validTempData = periodData.stream()
+                .filter(w -> w.getTemperature() != null && !w.getTemperature().trim().isEmpty())
+                .filter(w -> {
+                    try {
+                        Double.parseDouble(w.getTemperature());
+                        return true;
+                    } catch (NumberFormatException e) {
+                        log.warn("유효하지 않은 온도 값: {}", w.getTemperature());
+                        return false;
+                    }
+                })
+                .collect(Collectors.toList());
+            
+            log.info("유효한 온도 데이터 수: {}", validTempData.size());
+            
+            if (validTempData.isEmpty()) {
+                log.warn("유효한 온도 데이터가 없습니다");
+                Map<String, Object> errorResult = new HashMap<>();
+                errorResult.put("success", false);
+                errorResult.put("message", "해당 날짜의 유효한 기온 데이터가 없습니다");
+                return errorResult;
+            }
+
+            // 최고/최저 온도 찾기
+            Weather extremeTemp = validTempData.stream()
+                .min((a, b) -> {
+                    double tempA = Double.parseDouble(a.getTemperature());
+                    double tempB = Double.parseDouble(b.getTemperature());
+                    int comparison = type.equals("high_temp") 
+                        ? Double.compare(tempB, tempA)
+                        : Double.compare(tempA, tempB);
+                    log.debug("온도 비교: {} vs {} = {}", tempA, tempB, comparison);
+                    return comparison;
+                })
+                .orElse(null);
+
+            if (extremeTemp != null) {
+                log.info("찾은 {} 온도: {}°C, 시간: {}", 
+                    type.equals("high_temp") ? "최고" : "최저",
+                    extremeTemp.getTemperature(),
+                    extremeTemp.getDateTime());
+                
+                String datetime = extremeTemp.getDateTime();
+                String formattedDate = datetime.substring(0, 4) + "-" + 
+                                     datetime.substring(4, 6) + "-" + 
+                                     datetime.substring(6, 8);
+                String formattedTime = datetime.substring(8, 10) + ":" + 
+                                     datetime.substring(10, 12);
+                
+                Map<String, Object> result = new HashMap<>();
+                result.put("success", true);
+                result.put("datetime", formattedDate + " " + formattedTime);
+                result.put("temperature", extremeTemp.getTemperature());
+                result.put("windSpeed", extremeTemp.getWindSpeed());
+                result.put("pressure", extremeTemp.getPressure());
+                result.put("dewPoint", extremeTemp.getDewPoint());
+                
+                log.info("검색 결과: {}", result);
+                return result;
+            }
+            
+            return null;
+            
+        } catch (Exception e) {
+            log.error("온도 검색 중 오류 발생: {}", e.getMessage(), e);
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("success", false);
+            errorResult.put("message", "온도 검색 중 오류가 발생했습니다");
+            errorResult.put("error", e.getMessage());
+            return errorResult;
+        }
+    }
+}
